@@ -6,21 +6,23 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-embassy-embedded-hal = { version = "0.3.0", features = ["defmt"] }
-embassy-executor = { version = "0.7.0", features = [
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = [
+    "defmt",
+] }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = [
     "nightly",
     "arch-cortex-m",
     "executor-thread",
     "executor-interrupt",
     "defmt",
 ] }
-embassy-rp = { version = "0.4.0", features = [
+embassy-rp = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = [
     "defmt",
     "unstable-pac",
     "time-driver",
     "rp2040",
 ] }
-embassy-time = { version = "0.4.0", features = [
+embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = [
     "defmt",
     "defmt-timestamp-uptime",
 ] }
