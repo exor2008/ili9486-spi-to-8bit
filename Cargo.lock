@@ -706,6 +706,7 @@ dependencies = [
  "embassy-embedded-hal",
  "embassy-executor",
  "embassy-rp",
+ "embassy-sync",
  "embassy-time",
  "fixed",
  "fixed-macro",

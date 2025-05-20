@@ -2,4 +2,4 @@
 #![no_main]
 
 pub mod parallel_out;
-pub mod spi_in;
+pub mod pio_spi_slave;

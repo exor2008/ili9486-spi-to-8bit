@@ -4,11 +4,11 @@ use embassy_rp::pio::{
     Common, Config, Direction, FifoJoin, Instance, PioPin, ShiftConfig, ShiftDirection,
     StateMachine,
 };
-use embassy_rp::{into_ref, Peripheral, PeripheralRef};
+use embassy_rp::Peri;
 use fixed::types::U24F8;
 
 pub struct SpiIn<'a, P: Instance, const N: usize> {
-    dma: PeripheralRef<'a, AnyChannel>,
+    dma: Peri<'a, AnyChannel>,
     sm: StateMachine<'a, P, N>,
 }
 
@@ -16,52 +16,51 @@ impl<'a, P: Instance, const N: usize> SpiIn<'a, P, N> {
     pub fn new(
         pio: &mut Common<'a, P>,
         mut sm: StateMachine<'a, P, N>,
-        dma: impl Peripheral<P = impl Channel> + 'a,
-        miso: impl PioPin,
-        mosi: impl PioPin,
-        clk: impl PioPin,
-        cs: impl PioPin,
-        dc: impl PioPin,
+        dma: Peri<'a, impl Channel>,
+        miso: Peri<'a, impl PioPin>,
+        mosi: Peri<'a, impl PioPin>,
+        dc: Peri<'a, impl PioPin>,
+        clk: Peri<'a, impl PioPin>,
+        cs: Peri<'a, impl PioPin>,
     ) -> SpiIn<'a, P, N> {
-        into_ref!(dma);
-
-        let mosi = pio.make_pio_pin(mosi);
         let miso = pio.make_pio_pin(miso);
+        let mosi = pio.make_pio_pin(mosi);
+        let dc = pio.make_pio_pin(dc);
         let clk = pio.make_pio_pin(clk);
         let cs = pio.make_pio_pin(cs);
-        let dc = pio.make_pio_pin(dc);
 
         let prg_command = pio::pio_asm!(
             r#"
             .side_set 1 opt
+
+            drop:
+                mov ISR, NULL;
+                jmp check_cs;
             .wrap_target
-                wait 0 pin 2; // waiting for falling edge on Chip Select
-            loop:
-                wait 0 pin 1; // waiting for the rising edge on clock
-                wait 1 pin 1; // waiting for the falling edge on clock
-                in pins 1 side 0; // read data from master
-                jmp pin end;
-                jmp loop;
-            end:
+                wait 0 pin 2;
+                wait 1 pin 2;
+                in pins 2;
+            check_cs:
+                jmp pin drop;
             .wrap
             "#,
         );
 
-        sm.set_pin_dirs(Direction::In, &[&mosi, &clk, &cs, &dc]);
+        sm.set_pin_dirs(Direction::In, &[&mosi, &dc, &clk, &cs]);
         sm.set_pin_dirs(Direction::Out, &[&miso]);
 
         sm.set_pins(Level::Low, &[&miso]);
 
         let mut cfg = Config::default();
         cfg.use_program(&pio.load_program(&prg_command.program), &[&miso]);
-        cfg.set_in_pins(&[&mosi, &clk, &cs, &dc]);
+        cfg.set_in_pins(&[&mosi, &dc, &clk, &cs]);
         cfg.set_out_pins(&[&miso]);
         cfg.set_jmp_pin(&cs);
 
         cfg.shift_in = ShiftConfig {
             auto_fill: true,
             direction: ShiftDirection::Left,
-            threshold: 8,
+            threshold: 32,
         };
 
         cfg.fifo_join = FifoJoin::Duplex;
@@ -71,14 +70,14 @@ impl<'a, P: Instance, const N: usize> SpiIn<'a, P, N> {
         sm.set_enable(true);
 
         SpiIn {
-            dma: dma.map_into(),
+            dma: dma.into(),
             sm,
         }
     }
 }
 
 impl<'a, P: Instance, const N: usize> SpiIn<'a, P, N> {
-    pub async fn read(&mut self, data: &mut [u32]) {
+    pub async fn read(&mut self, data: &mut [u16]) {
         self.sm
             .rx()
             .dma_pull(self.dma.reborrow(), data, false)

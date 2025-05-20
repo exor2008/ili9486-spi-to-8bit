@@ -26,6 +26,7 @@ embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main",
     "defmt",
     "defmt-timestamp-uptime",
 ] }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 
 defmt = "1.0.1"
 defmt-rtt = "1.0.0"
