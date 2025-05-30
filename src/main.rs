@@ -4,7 +4,7 @@
 
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_rp::clocks::ClockConfig;
+use embassy_rp::clocks::{ClockConfig, RoscRng};
 use embassy_rp::config::Config;
 use embassy_rp::gpio::{Level, Output, Pull};
 use embassy_rp::spi::{Config as SpiConfig, Phase, Polarity, Spi};
@@ -14,12 +14,10 @@ use embassy_rp::{
     peripherals::{PIO0, PIO1},
     pio::{InterruptHandler, Pio},
 };
-use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-use embassy_sync::channel::Channel;
 use embassy_time::Duration;
 use embassy_time::Timer;
-use ili9486display::parallel_out::PioParallel8;
 use ili9486display::pio_spi_slave::SpiIn;
+use rand_core::RngCore;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -27,12 +25,8 @@ bind_interrupts!(struct Irqs {
     PIO1_IRQ_0 => InterruptHandler<PIO1>;
 });
 
-const PACKET_SIZE: usize = 1000;
-const QUEUE_SIZE: usize = 2;
-static CHANNEL: Channel<ThreadModeRawMutex, [u16; PACKET_SIZE], QUEUE_SIZE> = Channel::new();
-
 #[embassy_executor::main]
-async fn main(spawner: Spawner) -> ! {
+async fn main(_spawner: Spawner) -> ! {
     info!("Started");
     // let config = ClockConfig::system_freq(200_000_000);
     // let cfg = Config::new(config);
@@ -47,95 +41,29 @@ async fn main(spawner: Spawner) -> ! {
         &mut common,
         sm0,
         p.DMA_CH0,
-        p.PIN_16, // miso
         p.PIN_17, // mosi
         p.PIN_18, // dc
         p.PIN_19, // clk
         p.PIN_20, // cs
+        p.PIN_2,  // out 0
+        p.PIN_3,  // out 1
+        p.PIN_4,  // out 2
+        p.PIN_5,  // out 3
+        p.PIN_6,  // out 4
+        p.PIN_7,  // out 5
+        p.PIN_8,  // out 6
+        p.PIN_9,  // out 7
+        p.PIN_10, // dc out
+        p.PIN_11, // cs out
+        p.PIN_12, // read
+        p.PIN_13, // write
     );
 
-    let Pio {
-        mut common, sm0, ..
-    } = Pio::new(p.PIO1, Irqs);
-
-    let display = PioParallel8::new(
-        &mut common,
-        sm0,
-        p.DMA_CH1,
-        p.PIN_2,
-        p.PIN_3,
-        p.PIN_4,
-        p.PIN_5,
-        p.PIN_6,
-        p.PIN_7,
-        p.PIN_8,
-        p.PIN_9,
-        p.PIN_10,
-        p.PIN_11,
-        p.PIN_12,
-        p.PIN_13,
-    );
-
-    // let mut reset = Output::new(p.PIN_14, Level::Low);
-    // reset.set_low();
-    // Timer::after(Duration::from_millis(10)).await;
-    // reset.set_high();
-    // Timer::after(Duration::from_millis(120)).await;
     info!("Begin");
 
-    unwrap!(spawner.spawn(send_task(display)));
-
-    let mut data = [0; PACKET_SIZE];
-
-    // for _ in 0..1000 {
     loop {
-        spi_in.read(&mut data).await;
-        CHANNEL.try_send(data).expect("Buffer if full");
-        // info!("+");
+        spi_in.work().await;
     }
-    // info!("Read 1000");
-
-    // for j in 0..1000 {
-    //     let mut d = 0;
-    //     d |= data[j] & 0b1;
-    //     d |= (data[j] & 0b100) >> 1;
-    //     d |= (data[j] & 0b10000) >> 2;
-    //     d |= (data[j] & 0b1000000) >> 3;
-    //     d |= (data[j] & 0b100000000) >> 4;
-    //     d |= (data[j] & 0b10000000000) >> 5;
-    //     d |= (data[j] & 0b1000000000000) >> 6;
-    //     d |= (data[j] & 0b100000000000000) >> 7;
-
-    //     let mut dc = 0;
-    //     dc |= (data[j] & 0b10) >> 1;
-    //     dc |= (data[j] & 0b1000) >> 2;
-    //     dc |= (data[j] & 0b100000) >> 3;
-    //     dc |= (data[j] & 0b10000000) >> 4;
-    //     dc |= (data[j] & 0b1000000000) >> 5;
-    //     dc |= (data[j] & 0b100000000000) >> 6;
-    //     dc |= (data[j] & 0b10000000000000) >> 7;
-    //     dc |= (data[j] & 0b1000_0000_0000_0000) >> 8;
-
-    //     let status = if dc == 0 {
-    //         "Command"
-    //     } else if dc == 0xff {
-    //         "Data"
-    //     } else {
-    //         "Err"
-    //     };
-
-    //     //     if dc == 0 {
-    //     //         if [0x11, 0x3a, 0xb0, 0x29].contains(&d) {
-    //     //             // info!("{:#x} #{}", data[j], j);
-    //     info!("{} - {:#x} ({:032b}) #{}", status, d, data[j], j);
-    //     //         }
-    //     Timer::after_millis(10).await;
-    //     //     }
-    // }
-
-    // info!("End");
-    // loop {}
-    // }
 
     // let miso = p.PIN_12;
     // let mosi = p.PIN_11;
@@ -148,112 +76,106 @@ async fn main(spawner: Spawner) -> ! {
 
     // let mut spi = Spi::new(p.SPI1, clk, mosi, miso, p.DMA_CH0, p.DMA_CH1, cfg);
 
+    // cs.set_high();
+    // dc.set_low();
+
+    // Timer::after_secs(5).await;
+
+    // cs.set_low();
+    // spi.write(&[0x0, 0x11]).await.unwrap();
+    // spi.write(&[0x0, 0x29]).await.unwrap();
+
+    // spi.write(&[0x0, 0x3a]).await.unwrap();
+    // dc.set_high();
+    // spi.write(&[0x0, 0x55]).await.unwrap();
+    // dc.set_low();
+
+    // // cs.set_high();
+
     // loop {
-    //     for i in 1..=5 {
-    //         cs.set_low();
-    //         // Timer::after_millis(100).await;
-    //         let tx_buf = [i];
-    //         let mut rx_buf = [0_u8; 1];
-    //         dc.set_low();
-    //         spi.transfer(&mut rx_buf, &tx_buf).await.unwrap();
-    //         info!("Command {}", i);
-    //         dc.set_high();
-    //         for j in 0..i {
-    //             let tx_buf = [j];
-    //             spi.transfer(&mut rx_buf, &tx_buf).await.unwrap();
-    //             info!("Data {}", j);
-    //         }
-    //         cs.set_high();
-    //         Timer::after_secs(1).await;
-    //     }
-    //     Timer::after_secs(5).await;
+    //     spi.write(&[0x0, 0x2a]).await.unwrap();
+    //     dc.set_high();
+    //     // spi.write(&[0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x3f])
+    //     spi.write(&[0x0, 0x0, 0x0, 10, 0x0, 0x0, 0x0, 0xff])
+    //         .await
+    //         .unwrap();
+    //     dc.set_low();
+
+    //     spi.write(&[0x0, 0x2b]).await.unwrap();
+    //     dc.set_high();
+    //     // spi.write(&[0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0xdf])
+    //     spi.write(&[0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff])
+    //         .await
+    //         .unwrap();
+    //     dc.set_low();
+
+    //     let mut rng = RoscRng;
+    //     let mut pixels = [0; 320 * 480];
+    //     rng.fill_bytes(&mut pixels);
+
+    //     spi.write(&[0x0, 0x2c]).await.unwrap();
+    //     dc.set_high();
+    //     spi.write(&pixels).await.unwrap();
+    //     dc.set_low();
     // }
 }
 
-#[embassy_executor::task]
-async fn send_task(mut display: PioParallel8<'static, PIO1, 0>) -> ! {
-    // display.write(&[0x3a, 0x55 | 256]).await; // pixel format
-    // display.write(&[0x11]).await; // sleep out
-    // display.write(&[0x20]).await; // inversion off
-    // display.write(&[0x29]).await; // display on
-    // display.write(&[0x38]).await; // idle mode off
+// display.write(&[0x3a, 0x55 | 256]).await; // pixel format
+// display.write(&[0x11]).await; // sleep out
+// display.write(&[0x20]).await; // inversion off
+// display.write(&[0x29]).await; // display on
+// display.write(&[0x38]).await; // idle mode off
 
-    // display
-    //     .write(&[
-    //         0x2a,
-    //         1 | 256,
-    //         0x35 | 256,
-    //         1 | 256,
-    //         0x3f | 256,
-    //         // 1 | 256,
-    //         // 0xd5 | 256,
-    //         // 1 | 256,
-    //         // 0xdf | 256,
-    //     ])
-    //     .await; // set column
+// display
+//     .write(&[
+//         0x2a,
+//         1 | 256,
+//         0x35 | 256,
+//         1 | 256,
+//         0x3f | 256,
+//         // 1 | 256,
+//         // 0xd5 | 256,
+//         // 1 | 256,
+//         // 0xdf | 256,
+//     ])
+//     .await; // set column
 
-    // display
-    //     .write(&[
-    //         0x2b,
-    //         0 | 256,
-    //         10 | 256,
-    //         0 | 256,
-    //         20 | 256,
-    //         // 1 | 256,
-    //         // 0x35 | 256,
-    //         // 1 | 256,
-    //         // 0x3f | 256,
-    //     ])
-    //     .await; // set page
+// display
+//     .write(&[
+//         0x2b,
+//         0 | 256,
+//         10 | 256,
+//         0 | 256,
+//         20 | 256,
+//         // 1 | 256,
+//         // 0x35 | 256,
+//         // 1 | 256,
+//         // 0x3f | 256,
+//     ])
+//     .await; // set page
 
-    // display.write(&[0x2c]).await; // memory write
-    // display.write(&[0b1111_1111 | 256; 200]).await; // memory write
-    // info!("Coco");
+// display.write(&[0x2c]).await; // memory write
+// display.write(&[0b1111_1111 | 256; 200]).await; // memory write
 
-    loop {
-        let mut data = CHANNEL.receive().await;
-        convert(&mut data);
-        display.write(&data).await;
-
-        if data.iter().any(|d| *d == 0x11) {
-            info!("Got sleep out");
-        }
-        if data.iter().any(|d| *d == 0x13) {
-            info!("Got normal mode");
-        }
-        if data.iter().any(|d| *d == 0x2a) {
-            info!("Got set column");
-        }
-
-        // for i in 0..PACKET_SIZE {
-        // info!("{:032b}", i);
-        // Timer::after_millis(10).await;
-        // }
-        // info!("-");
-
-        // loop {
-        // Timer::after_millis(1).await;
-    }
-}
-
-fn convert(data: &mut [u16]) {
-    for i in data.iter_mut() {
-        let mut new = 0;
-        let orig = *i;
-        new |= orig & 0b1;
-        new |= (orig & 0b100) >> 1;
-        new |= (orig & 0b10000) >> 2;
-        new |= (orig & 0b1000000) >> 3;
-        new |= (orig & 0b100000000) >> 4;
-        new |= (orig & 0b10000000000) >> 5;
-        new |= (orig & 0b1000000000000) >> 6;
-        new |= (orig & 0b100000000000000) >> 7;
-        new |= (orig & 0b010) << 7;
-        new = match new {
-            0x2a => 0x2b,
-            0x2b => 0x2a,
-            _ => new,
-        };
-        *i = new;
-    }
-}
+// loop {
+//     //     // spi.write(&[0, 0b1111_0000]).await.unwrap();
+//     //     // for i in 1..=5 {
+//     //     //     cs.set_low();
+//     //     //     // Timer::after_millis(100).await;
+//     //     //     let tx_buf = [i];
+//     //     //     let mut rx_buf = [0_u8; 1];
+//     //     //     dc.set_low();
+//     //     //     spi.transfer(&mut rx_buf, &tx_buf).await.unwrap();
+//     //     //     info!("Command {}", i);
+//     //     //     dc.set_high();
+//     //     //     for j in 0..i {
+//     //     //         let tx_buf = [j];
+//     //     //         spi.transfer(&mut rx_buf, &tx_buf).await.unwrap();
+//     //     //         info!("Data {}", j);
+//     //     //     }
+//     //     //     cs.set_high();
+//     //     //     Timer::after_secs(1).await;
+//     //     // }
+//     //     // Timer::after_secs(5).await;
+// }
+// }
