@@ -7,15 +7,16 @@ use embassy_rp::pio::{
 use embassy_rp::Peri;
 use fixed::types::U24F8;
 
-pub struct SpiIn<'a, P: Instance, const N: usize> {
+pub struct PioConverter<'a, P: Instance, const N: usize> {
     dma: Peri<'a, AnyChannel>,
     sm: StateMachine<'a, P, N>,
 }
 
-impl<'a, P: Instance, const N: usize> SpiIn<'a, P, N> {
+impl<'a, P: Instance, const N: usize> PioConverter<'a, P, N> {
     pub fn new(
         pio: &mut Common<'a, P>,
         mut sm: StateMachine<'a, P, N>,
+
         dma: Peri<'a, impl Channel>,
         mosi: Peri<'a, impl PioPin>,
         dc_in: Peri<'a, impl PioPin>,
@@ -34,7 +35,7 @@ impl<'a, P: Instance, const N: usize> SpiIn<'a, P, N> {
         cs_out: Peri<'a, impl PioPin>,
         rd: Peri<'a, impl PioPin>,
         wr: Peri<'a, impl PioPin>,
-    ) -> SpiIn<'a, P, N> {
+    ) -> PioConverter<'a, P, N> {
         let mosi = pio.make_pio_pin(mosi);
         let dc_in = pio.make_pio_pin(dc_in);
         let clk = pio.make_pio_pin(clk);
@@ -60,16 +61,9 @@ impl<'a, P: Instance, const N: usize> SpiIn<'a, P, N> {
             drop:
                 mov ISR NULL
                 mov OSR NULL
-                jmp pin drop
+                jmp pin drop    side 0b111; wr - OFF rd - OFF cs - OFF
+
             .wrap_target
-
-                set X 7
-            first8:
-                wait 0 pin 2
-                wait 1 pin 2
-                jmp pin drop
-                jmp X-- first8
-
                 wait 0 pin 2
                 wait 1 pin 2
                 jmp pin drop
@@ -79,49 +73,21 @@ impl<'a, P: Instance, const N: usize> SpiIn<'a, P, N> {
             last7:
                 wait 0 pin 2
                 wait 1 pin 2
-                in pins 1
-                jmp pin drop side 0b010
+                in pins 1       side 0b010; wr - ON rd - OFF cs - ON
+                jmp pin drop 
                 jmp X-- last7
 
                 mov pins ISR
                 nop
                 nop
                 nop
-                nop side 0b110
+                nop
+                nop
+                nop
+                nop
+                nop             side 0b110; wr - OFF rd - OFF cs - ON
             .wrap
             "#,
-            // r#"
-            // .side_set 3 opt
-
-            // drop:
-            //     mov ISR NULL
-            //     mov OSR NULL
-            //     jmp pin drop
-            // .wrap_target
-            //     set X 8
-            // first8:
-            //     wait 0 pin 2
-            //     // wait 1 pin 2 side 0b110; wr - OFF rd - OFF cs - ON
-            //     wait 1 pin 2
-            //     jmp pin drop
-            //     jmp X-- first8
-
-            //     wait 0 pin 2
-            //     wait 1 pin 2
-            //     in pins 2
-
-            //     set X 7
-            // last7:
-            //     wait 0 pin 2
-            //     wait 1 pin 2
-            //     in pins 1
-            //     // in pins 1 side 0b010; wr - ON rd - OFF cs - ON
-            //     jmp pin drop
-            //     jmp X-- last7
-
-            //     mov pins ISR side 0b010
-            // .wrap
-            // "#,
         );
 
         sm.set_pin_dirs(Direction::In, &[&mosi, &dc_in, &clk, &cs_in]);
@@ -131,8 +97,8 @@ impl<'a, P: Instance, const N: usize> SpiIn<'a, P, N> {
                 &db0, &db1, &db2, &db3, &db4, &db5, &db6, &db7, &dc_out, &cs_out, &rd, &wr,
             ],
         );
-        sm.set_pins(Level::High, &[&cs_out, &wr]);
-        sm.set_pins(Level::Low, &[&dc_out, &rd]);
+        sm.set_pins(Level::High, &[&cs_out, &wr, &rd]);
+        sm.set_pins(Level::Low, &[&dc_out]);
 
         let mut cfg = Config::default();
         cfg.use_program(
@@ -160,14 +126,14 @@ impl<'a, P: Instance, const N: usize> SpiIn<'a, P, N> {
         sm.set_config(&cfg);
         sm.set_enable(true);
 
-        SpiIn {
+        PioConverter {
             dma: dma.into(),
             sm,
         }
     }
 }
 
-impl<'a, P: Instance, const N: usize> SpiIn<'a, P, N> {
+impl<'a, P: Instance, const N: usize> PioConverter<'a, P, N> {
     pub async fn work(&mut self) {
         let mut data = [0u16; 1];
         self.sm
